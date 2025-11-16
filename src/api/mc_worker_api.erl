@@ -58,7 +58,10 @@ connect() ->
 %% @doc Make one connection to server, return its pid
 -spec connect(args()) -> {ok, pid()}.
 connect(Args) ->  % TODO args as map
-  {ok, Connection} = mc_worker:start_link(Args),
+  io:format("DEBUG mc_worker_api: Calling mc_worker:start_link with Args=~p~n", [Args]),
+  Result = mc_worker:start_link(Args),
+  io:format("DEBUG mc_worker_api: mc_worker:start_link returned: ~p~n", [Result]),
+  {ok, Connection} = Result,
   Login = mc_utils:get_value(login, Args),
   Password = mc_utils:get_value(password, Args),
   case (Login /= undefined) and (Password /= undefined) of
@@ -69,7 +72,7 @@ connect(Args) ->  % TODO args as map
     false -> ok
   end,
   {ok, Connection}.
-
+  
 -spec disconnect(pid()) -> ok.
 disconnect(Connection) ->
   mc_worker:disconnect(Connection).
@@ -469,7 +472,17 @@ count(Cmd = #{connection := Connection, collection := Collection, selector := Se
 %%      IndexSpec      :: bson document, for e.g. {field, 1, other, -1, location, 2d}, <strong>required</strong>
 -spec ensure_index(pid(), colldb(), bson:document()) -> ok | {error, any()}.
 ensure_index(Connection, Coll, IndexSpec) ->
+  io:format("DEBUG mc_worker_api:ensure_index/3 called:~n"),
+  io:format("  Connection: ~p~n", [Connection]),
+  io:format("  Coll: ~p~n", [Coll]),
+  io:format("  IndexSpec: ~p~n", [IndexSpec]),
+  io:format("  IndexSpec type: ~p~n", [type_of(IndexSpec)]),
   ensure_index(Connection, Coll, IndexSpec, undefined).
+
+type_of(X) when is_map(X) -> map;
+type_of(X) when is_list(X) -> list;
+type_of(X) when is_tuple(X) -> tuple;
+type_of(_) -> other.
 
 -spec ensure_index(pid(), colldb(), bson:document(), database()) -> ok | {error, any()}.
 ensure_index(Connection, Coll, IndexSpec, DB) ->
@@ -478,7 +491,7 @@ ensure_index(Connection, Coll, IndexSpec, DB) ->
 ensure_index(true, Connection, Coll, IndexSpec, DB) ->
   mc_connection_man:request_worker(Connection, #ensure_index{database = DB, collection = Coll, index_spec = IndexSpec});
 ensure_index(false, Connection, Coll, IndexSpec, DB) ->
-  command(DB, Connection, {<<"createIndexes">>, Coll, <<"indexes">>, IndexSpec}).
+  command(DB, Connection, {<<"createIndexes">>, Coll, <<"indexes">>, [IndexSpec]}).
 
 %% @doc Execute given MongoDB command and return its result.
 -spec command(pid(), selector()) -> {boolean(), map()} | {ok, cursor()}.

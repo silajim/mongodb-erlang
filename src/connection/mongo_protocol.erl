@@ -98,24 +98,65 @@ put_message(Db, #op_msg_write_op{} = OpMsg, _RequestId) ->
     (put_section_type_zero(OpMsg#op_msg_write_op{database = make_bin(Db)}))/binary
   >>;
 put_message(Db, #op_msg_command{} = OpMsg, _RequestId) ->
-  <<
+  
+  io:format("DEBUG put_message: Db=~p, OpMsg=~p~n", [Db, OpMsg]),
+  io:format("DEBUG put_message: Calling make_bin~n"),
+  BinDb = make_bin(Db),
+  io:format("DEBUG put_message: BinDb=~p~n", [BinDb]),
+  io:format("DEBUG put_message: Calling put_section_type_zero~n"),
+  Section = put_section_type_zero(OpMsg#op_msg_command{database = BinDb}),
+  io:format("DEBUG put_message: Section created~n"),
+   <<
     ?put_header(?OpMsgOpcode),
     ?put_uint32(0), % Flags
     (put_section_type_zero(OpMsg#op_msg_command{database = make_bin(Db)}))/binary
   >>.
-
 make_bin(Atom) when is_atom(Atom) ->
   erlang:atom_to_binary(Atom, utf8);
 make_bin(Bin) ->
   Bin.
 
+% put_section_type_zero(#op_msg_command{
+%   command_doc = Doc,
+%   database = Database
+% }) ->
+%   io:format("DEBUG put_section_type_zero: Doc=~p, Database=~p~n", [Doc, Database]),
+%   io:format("DEBUG put_section_type_zero: Calling bson:merge~n"),
+  
+%   % Extract first command field, then add $db, then add rest
+%   % [{FirstKey, FirstVal} | Rest] = Doc,
+%   % FlatRest = list_to_tuple(lists:flatten([[K, V] || {K, V} <- Rest])),
+%   % Reverse the merge - put FlatRest second so it comes after
+%   % MergedDoc = bson:merge(Rest, {FirstKey, FirstVal, <<"$db">>, Database}),
+  
+%   % io:format("DEBUG put_section_type_zero: MergedDoc=~p~n", [MergedDoc]),
+%   io:format("DEBUG put_section_type_zero: Calling bson_binary:put_document~n"),
+%   % BsonBinary = bson_binary:put_document(MergedDoc),
+%   % io:format("DEBUG put_section_type_zero: BsonBinary created~n"),
+%   %   <<
+%   %   ?put_uint8(0),
+%   %   BsonBinary/binary
+%   % >>;
+%   <<
+%     ?put_uint8(0),
+%     (bson_binary:put_document(bson:merge(Doc, {<<"$db">>, Database})))/binary
+%   >>;
 put_section_type_zero(#op_msg_command{
   command_doc = Doc,
   database = Database
 }) ->
+  io:format("DEBUG put_section_type_zero: Doc=~p, Database=~p~n", [Doc, Database]),
+  
+  % Convert to list, extract first two elements, rebuild with $db inserted
+  DocList = tuple_to_list(Doc),
+  [FirstField, FirstValue | Rest] = DocList,
+  
+  % Rebuild: first_field, first_value, $db, database, then rest
+  NewDocList = [FirstField, FirstValue, <<"$db">>, Database | Rest],
+  NewDoc = list_to_tuple(NewDocList),
   <<
-    ?put_uint8(0),
-    (bson_binary:put_document(bson:merge(Doc, {<<"$db">>, Database})))/binary
+  ?put_uint8(0),
+  (bson_binary:put_document(NewDoc))/binary
   >>;
 put_section_type_zero(#op_msg_write_op{
   command = Command,

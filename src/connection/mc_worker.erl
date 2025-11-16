@@ -50,17 +50,24 @@ database(Worker, Database) ->
   gen_server:cast(Worker, {database, Database}).
 
 init(Options) ->
+  io:format("DEBUG mc_worker:init - Options: ~p~n", [Options]),
   case mc_worker_logic:connect(Options) of
     {ok, Socket} ->
+      io:format("DEBUG mc_worker:init - Socket connected, forming state~n"),
       ConnState = form_state(Options),
+      io:format("DEBUG mc_worker:init - ConnState formed: ~p~n", [ConnState]),
       try_register(Options),
+      io:format("DEBUG mc_worker:init - Registration attempted~n"),
       NetModule = get_set_opts_module(Options),
+      io:format("DEBUG mc_worker:init - NetModule: ~p~n", [NetModule]),
       NextReqFun = mc_utils:get_value(next_req_fun, Options, fun() -> ok end),
       DefaultUseLegacyProtocol = application:get_env(mongodb, use_legacy_protocol, auto),
       UseLegacyProtocol = mc_utils:get_value(use_legacy_protocol, Options, DefaultUseLegacyProtocol),
       ProtoOpts = #{use_legacy_protocol => UseLegacyProtocol},
+      io:format("DEBUG mc_worker:init - Calling install_mc_worker_info~n"),
       case mc_worker_pid_info:install_mc_worker_info(Options, NetModule, ConnState#conn_state.database, ProtoOpts) of
         ok ->
+          io:format("DEBUG mc_worker:init - Success!~n"),
           proc_lib:init_ack({ok, self()}),
           gen_server:enter_loop(?MODULE, [],
             #state{socket = Socket,
@@ -68,9 +75,11 @@ init(Options) ->
               net_module = NetModule,
               next_req_fun = NextReqFun});
         {error, _} = Error ->
+          io:format("DEBUG mc_worker:init - Error from install_mc_worker_info: ~p~n", [Error]),
           proc_lib:init_ack(Error)
       end;
     Error ->
+      io:format("DEBUG mc_worker:init - Connection failed: ~p~n", [Error]),
       proc_lib:init_ack(Error)
   end.
 
@@ -136,14 +145,19 @@ code_change(_Old, State, _Extra) ->
   {ok, State}.
 
 process_op_msg_request(Request, From, State) ->
+io:format("DEBUG process_op_msg_request: Request=~p, From=~p, State=~p~n", [Request, From , State]),
   #state{socket = Socket,
     request_storage = RequestStorage,
     conn_state = CS,
     net_module = NetModule,
     next_req_fun = Next} = State,
   Database = CS#conn_state.database,
+  io:format("DEBUG process_op_msg_request: Database=~p~n", [Database]),
+  io:format("DEBUG process_op_msg_request: calling mc_worker_logic:make_request~n"),
   {ok, PacketSize, Id} = mc_worker_logic:make_request(Socket, NetModule, Database, Request),
+  io:format("DEBUG process_op_msg_request: after mc_worker_logic:make_request Ok=~p, PacketSize=~p , Id=~p , Request=~p~n" , [ok,PacketSize,Id,Request]),
   UState = need_hibernate(PacketSize, State),
+  io:format("DEBUG process_op_msg_request: calling get_op_msg_write_concern~n"),
   case get_op_msg_write_concern(Request) of
     {_, {<<"w">>, 0}} -> %no concern request
       Next(),
@@ -152,9 +166,11 @@ process_op_msg_request(Request, From, State) ->
         UState};
     _ ->  %ordinary request with response
       Next(),
-      RespFun = mc_worker_logic:get_resp_fun(Request, From),  % save function, which will be called on response
+      io:format("DEBUG process_op_msg_request: calling mc_worker_logicLget_resp_fun~n"),
+      RespFun = mc_worker_logic:get_resp_fun(Request, From),  % save function, which will be called on response    
       URStorage = RequestStorage#{Id => RespFun},
-      {noreply, UState#state{request_storage = URStorage}}
+      io:format("DEBUG process_op_msg_request: case end~n"),
+      {noreply, UState#state{request_storage = URStorage}}      
   end.
 
 get_op_msg_write_concern(#op_msg_write_op{extra_fields = ExtraFields}) ->
@@ -162,8 +178,16 @@ get_op_msg_write_concern(#op_msg_write_op{extra_fields = ExtraFields}) ->
     {_, WC} -> WC;
     _ -> not_found
   end;
-get_op_msg_write_concern(#op_msg_command{command_doc = DocList}) ->
+get_op_msg_write_concern(#op_msg_command{command_doc = Doc}) when is_map(Doc) ->
+  maps:get(<<"writeConcern">>, Doc, not_found);
+get_op_msg_write_concern(#op_msg_command{command_doc = DocList}) when is_list(DocList) ->
   case lists:keyfind(<<"writeConcern">>, 1, DocList) of
+    {_, WC} -> WC;
+    _ -> not_found
+  end;
+get_op_msg_write_concern(#op_msg_command{command_doc = DocTuple}) when is_tuple(DocTuple) ->
+  Fields = bson:fields(DocTuple),
+  case lists:keyfind(<<"writeConcern">>, 1, Fields) of
     {_, WC} -> WC;
     _ -> not_found
   end.

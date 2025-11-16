@@ -57,9 +57,7 @@ read_one(Connection, Request) ->
 
 -spec command(pid(), mc_worker_api:selector()) -> {boolean(), map()}.
 command(Connection, Query = #query{selector = Cmd}) ->
-  io:format("DEBUG mc_connection_man:command Cmd=~p~n", [Cmd]),
   QueryOrOpMsg = query_to_op_msg_cmd(mc_utils:use_legacy_protocol(Connection), Query),
-  io:format("DEBUG mc_connection_man:command QueryOrOpMsg=~p~n", [QueryOrOpMsg]),
   case determine_cursor(Cmd) of
     false ->
       legacy_command(mc_utils:use_legacy_protocol(Connection), Connection, QueryOrOpMsg);
@@ -84,19 +82,18 @@ legacy_command(false, Connection, OpMsg) ->
   {true, mc_connection_man:op_msg_raw_result(Connection, OpMsg)}.
 
 -spec query_to_op_msg_cmd(boolean(), mc_worker_api:selector() ) -> query() | op_msg_command().
-query_to_op_msg_cmd(true, Query) ->
-  Query#query{batchsize = -1};
 query_to_op_msg_cmd(false, Query) ->
   #query{database = DB, slaveok = SlaveOk, selector = Selector} = Query,
   Fields = bson:fields(Selector),
   NewSelector =
     case {lists:keyfind(<<"$readPreference">>, 1, Fields), SlaveOk} of
-      {{<<"$readPreference">>, _}, _} -> Selector;
+      {{<<"$readPreference">>, _}, _} -> 
+        maps:from_list(Fields);  %% FIX: Convert list to map
       {false, true} ->
-        bson:merge({<<"$readPreference">>, #{<<"mode">> => <<"primaryPreferred">>}},Selector);
+        MergedFields = bson:merge(Fields, {<<"$readPreference">>, #{<<"mode">> => <<"primaryPreferred">>}}),
+        maps:from_list(MergedFields);  %% FIX: Convert list to map
       {false, false} ->
-        %% primary is the default mode so we do not need to change anything
-        Selector
+        maps:from_list(Fields)  %% FIX: Convert list to map
     end,
   #'op_msg_command'{
     database = DB,
@@ -189,7 +186,6 @@ op_msg_read_one(Connection, OpMsg) ->
 
 op_msg_raw_result(Connection, OpMsg) ->
   Timeout = mc_utils:get_timeout(),
-  io:format("DEBUG mc_connection_man:op_msg_raw_result: Connection=~p, OpMsg=~p,~n", [Connection, OpMsg]),
   FromServer = gen_server:call(Connection, OpMsg, Timeout),
   case FromServer of
     #op_msg_response{response_doc =

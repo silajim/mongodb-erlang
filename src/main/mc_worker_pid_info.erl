@@ -123,14 +123,30 @@ detect_protocol_type(auto, ConnectionOpts, NetModule, Database) ->
   %% * https://github.com/mongodb/mongo/blob/5e494138af456f42381ad08748cc7fbc4ace7a60/src/mongo/base/error_codes.yml
   %% * https://www.mongodb.com/docs/manual/reference/command/hello/#mongodb-dbcommand-dbcmd.hello
   %% * https://www.mongodb.com/docs/manual/reference/mongodb-wire-protocol/#std-label-wire-op-msg
+  io:format("DEBUG detect_protocol: Starting auto-detect~n"),
   {ok, Socket} = mc_worker_logic:connect(ConnectionOpts),
-  Command = bson:fields({hello, 1}),
+  io:format("DEBUG detect_protocol: Socket connected~n"),
+  Command = {hello, 1}, %%bson:fields({hello, 1}),
+  io:format("DEBUG detect_protocol: Command created: ~p~n", [Command]),
   Request = #op_msg_command{command_doc = Command, database = Database},
-  try mc_connection_man:request_raw_no_parse(Socket, Database, Request, NetModule) of
-    [{_, #op_msg_response{response_doc = #{<<"ok">> := _}}} | _] -> op_msg;
-    _ErrorResponse -> legacy
+  io:format("DEBUG detect_protocol: Request created~n"),
+  try 
+    io:format("DEBUG detect_protocol: Calling request_raw_no_parse~n"),
+    Result = mc_connection_man:request_raw_no_parse(Socket, Database, Request, NetModule),
+    io:format("DEBUG detect_protocol: Got result: ~p~n", [Result]),
+    case Result of
+      [{_, #op_msg_response{response_doc = #{<<"ok">> := _}}} | _] -> 
+        io:format("DEBUG detect_protocol: SUCCESS - Selected protocol: op_msg~n"),
+        op_msg;
+      _ErrorResponse -> 
+        io:format("DEBUG detect_protocol: FALLBACK - Selected protocol: legacy (error response: ~p)~n", [_ErrorResponse]),
+        legacy
+    end
   catch
-    _:_ -> legacy
+    Class:Error:Stack ->
+      io:format("DEBUG detect_protocol: CAUGHT ~p:~p~n Stack: ~p~n", [Class, Error, Stack]),
+      io:format("DEBUG detect_protocol: EXCEPTION - Selected protocol: legacy~n"),
+      legacy
   after
     NetModule:close(Socket)
   end.

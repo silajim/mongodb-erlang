@@ -34,8 +34,13 @@ connect(Conf) ->
   {ok | {error, any()}, integer(), pos_integer()}.
 
 make_request(Socket, NetModule, Database, Request) ->
+  io:format("DEBUG make_request: Database=~p, Request=~p~n", [Database, Request]),
   {Packet, Id} = encode_request(Database, Request),
-  {NetModule:send(Socket, Packet), iolist_size(Packet), Id}.
+  io:format("DEBUG make_request: Encoded Packet size=~p, Id=~p~n", [iolist_size(Packet), Id]),
+  io:format("DEBUG make_request: Calling ~p:send~n", [NetModule]),
+  SendResult = {NetModule:send(Socket, Packet), iolist_size(Packet), Id},
+  io:format("DEBUG make_request: Send result=~p~n", [SendResult]),
+  SendResult.
 
 decode_responses(Data) ->
   decode_responses(Data, []).
@@ -83,13 +88,18 @@ ensure_index(IndexSpec, Database, Collection) when is_tuple(IndexSpec) ->
 %% @private
 -spec encode_request(mc_worker_api:database(), mongo_protocol:message() | list(mongo_protocol:message())) -> {iodata(), pos_integer()}.
 encode_request(Database, Request) when is_list(Request) ->
+  io:format("DEBUG encode_request: List request~n"),
   lists:foldl(fun(Message, {Bin, _}) ->
     {NewBin, NewId} = encode_request(Database, Message),
     {Bin ++ [NewBin], NewId}
               end, {[], 0}, Request);
 encode_request(Database, Request) ->
+  io:format("DEBUG encode_request: Database=~p, Request=~p~n", [Database, Request]),
   RequestId = mongo_id_server:request_id(),
+  io:format("DEBUG encode_request: RequestId=~p~n", [RequestId]),
+  io:format("DEBUG encode_request: Calling mongo_protocol:put_message~n"),
   Payload = mongo_protocol:put_message(Database, Request, RequestId),
+  io:format("DEBUG encode_request: Payload size=~p~n", [byte_size(Payload)]),
   {<<(byte_size(Payload) + 4):32/little, Payload/binary>>, RequestId}.
 
 %% @private
@@ -138,10 +148,16 @@ process_op_msg_response(From) ->
 
 %% @private
 do_connect(Host, Port, Timeout, true, Opts) ->
+  io:format("DEBUG mc_worker_logic: SSL connect to ~p:~p~n", [Host, Port]),
   {ok, _} = application:ensure_all_started(ssl),
-  ssl:connect(Host, Port, [binary, {active, true}, {packet, raw}] ++ Opts, Timeout);
+  Result = ssl:connect(Host, Port, [binary, {active, true}, {packet, raw}] ++ Opts, Timeout),
+  io:format("DEBUG mc_worker_logic: SSL connect result: ~p~n", [Result]),
+  Result;
 do_connect(Host, Port, Timeout, false, _) ->
-  gen_tcp:connect(Host, Port, [binary, {active, true}, {packet, raw}], Timeout).
+  io:format("DEBUG mc_worker_logic: TCP connect to ~p:~p with timeout ~p~n", [Host, Port, Timeout]),
+  Result = gen_tcp:connect(Host, Port, [binary, {active, true}, {packet, raw}], Timeout),
+  io:format("DEBUG mc_worker_logic: TCP connect result: ~p~n", [Result]),
+  Result.
 
 do_srv_connect(Srv, Timeout, SSL, SslOpts) ->
   {ok, Seeds} = mc_utils:get_srv_seeds(Srv),
