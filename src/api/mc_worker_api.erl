@@ -269,36 +269,62 @@ find_one(Connection, Coll, Selector, Args) ->
 %% @doc Return first selected document, if any
 -spec find_one(pid(), colldb(), selector(), map(), database()) -> map() | undefined.
 find_one(Connection, Coll, Selector, Args, Db) ->
+  io:format("~n[DEBUG] find_one/5 called~n"),
+  io:format("  Connection: ~p~n", [Connection]),
+  io:format("  Coll: ~p~n", [Coll]),
+  io:format("  Selector: ~p~n", [Selector]),
+  io:format("  Args: ~p~n", [Args]),
+  io:format("  Db: ~p~n", [Db]),
+  
   Projector = maps:get(projector, Args, #{}),
+  io:format("  Projector: ~p~n", [Projector]),
+  
   Skip = maps:get(skip, Args, 0),
+  io:format("  Skip: ~p~n", [Skip]),
+  
   ReadPref = maps:get(readopts, Args, #{<<"mode">> => <<"primary">>}),
+  io:format("  ReadPref: ~p~n", [ReadPref]),
+  
   UseLegacyProtocol = mc_utils:use_legacy_protocol(Connection),
+  io:format("  UseLegacyProtocol: ~p~n", [UseLegacyProtocol]),
+  
   find_one(UseLegacyProtocol, Connection, Coll, Selector, Projector, Skip, ReadPref, Db).
 
 find_one(true, Connection, Coll, Selector, Projector, Skip, ReadPref, Db) ->
-  find_one(Connection,
-    #'query'{
+  io:format("~n[DEBUG] find_one/8 (legacy protocol)~n"),
+  Query = #'query'{
       database = Db,
       collection = Coll,
       selector = mongoc:append_read_preference(Selector, ReadPref),
       projector = Projector,
       skip = Skip
-    });
+    },
+  io:format("  Constructed Query: ~p~n", [Query]),
+  
+  Result = find_one(Connection, Query),
+  io:format("  Result: ~p~n", [Result]),
+  Result;
+
 find_one(false, Connection, Coll, Selector, Projector, Skip, ReadPref, _Db) ->
-  CommandDoc = [
-    {<<"find">>, Coll},
-    {<<"$readPreference">>, ReadPref},
-    {<<"filter">>, Selector},
-    {<<"projection">>, Projector},
-    {<<"skip">>, Skip},
-    {<<"batchSize">>, 1},
-    {<<"limit">>, 1},
-    {<<"singleBatch">>, true} %% Close cursor after first batch
-  ],
-  mc_connection_man:op_msg_read_one(Connection,
+  io:format("~n[DEBUG][~p] find_one/8 (modern protocol)~n", [self()]),
+  CommandDoc = {
+    <<"find">>, Coll,
+    <<"$readPreference">>, ReadPref,
+    <<"filter">>, Selector,
+    <<"projection">>, Projector,
+    <<"skip">>, Skip,
+    <<"batchSize">>, 1,
+    <<"limit">>, 1,
+    <<"singleBatch">>, true  %% Close cursor after first batch
+  },
+  io:format("  [~p] CommandDoc: ~p~n", [self(), CommandDoc]),
+  
+  Result = mc_connection_man:op_msg_read_one(Connection,
     #'op_msg_command'{
       command_doc = CommandDoc
-    }).
+    }),
+  io:format("  [~p] Result: ~p~n", [self(), Result]),
+  Result.
 
 %% @doc Return projection of selected documents.
 %% params:
@@ -347,18 +373,35 @@ find(Connection, Coll, Selector, Args) ->
 %%      Empty projection [] means full projection.
 -spec find(pid(), colldb(), selector(), map(), database()) -> {ok, cursor()} | [].
 find(Connection, Coll, Selector, Args, Db) ->
+  io:format("~n[DEBUG][~p] find/5 called~n", [self()]),
+  io:format("  Connection: ~p~n", [Connection]),
+  io:format("  Coll: ~p~n", [Coll]),
+  io:format("  Selector: ~p~n", [Selector]),
+  io:format("  Args: ~p~n", [Args]),
+  io:format("  Db: ~p~n", [Db]),
+  
   Projector = maps:get(projector, Args, #{}),
+  io:format("  Projector: ~p~n", [Projector]),
+  
   Skip = maps:get(skip, Args, 0),
+  io:format("  Skip: ~p~n", [Skip]),
+  
+  UseLegacy = mc_utils:use_legacy_protocol(Connection),
+  io:format("  UseLegacyProtocol: ~p~n", [UseLegacy]),
+  
   BatchSize =
-        case mc_utils:use_legacy_protocol(Connection) of
+        case UseLegacy of
             true ->
                 maps:get(batchsize, Args, 0);
             false ->
                 maps:get(batchsize, Args, 101)
         end,
+  io:format("  BatchSize: ~p~n", [BatchSize]),
+  
   ReadPref = maps:get(readopts, Args, #{<<"mode">> => <<"primary">>}),
-  find(Connection,
-    #'query'{
+  io:format("  ReadPref: ~p~n", [ReadPref]),
+  
+  Query = #'query'{
       database = Db,
       collection = Coll,
       selector = mongoc:append_read_preference(Selector, ReadPref),
@@ -367,7 +410,12 @@ find(Connection, Coll, Selector, Args, Db) ->
       batchsize = BatchSize,
       slaveok = true,
       sok_overriden = true
-    }).
+    },
+  io:format(" [~p] Constructed Query: ~p~n", [self(),Query]),
+  
+  Result = find(Connection, Query),
+  io:format("  Result: ~p~n", [Result]),
+  Result.
 
 %% @doc Return projection of selected documents.
 %% params:
@@ -395,29 +443,57 @@ find(Connection, Query) when is_record(Query, query) ->
 fixed_query(true, Query) ->
   Query;
 fixed_query(false, Query) ->
+  io:format("~n[DEBUG][~p] fixed_query: using modern protocol~n", [self()]),
   #'query'{collection = Coll,
     skip = Skip,
     selector = Selector,
     batchsize = BatchSize,
-    projector = Projector} = Query,
+    projector = Projector,
+    database = DB} = Query,
+  io:format("[DEBUG][~p] fixed_query: Coll=~p~n", [self(), Coll]),
+  io:format("[DEBUG][~p] fixed_query: Skip=~p~n", [self(), Skip]),
+  io:format("[DEBUG][~p] fixed_query: Selector=~p~n", [self(), Selector]),
+  io:format("[DEBUG][~p] fixed_query: BatchSize=~p~n", [self(), BatchSize]),
+  io:format("[DEBUG][~p] fixed_query: Projector=~p~n", [self(), Projector]),
+  io:format("[DEBUG][~p] fixed_query: DB=~p~n", [self(), DB]),
+  
   {ReadPref, NewSelector, OrderBy} = mongoc:extract_read_preference(Selector),
-  %% We might need to do some transformations:
-  %% See: https://github.com/mongodb/specifications/blob/master/source/find_getmore_killcursors_commands.rst#mapping-op-query-behavior-to-the-find-command-limit-and-batchsize-fields
+  io:format("[DEBUG][~p] fixed_query: ReadPref=~p~n", [self(), ReadPref]),
+  io:format("[DEBUG][~p] fixed_query: NewSelector=~p~n", [self(), NewSelector]),
+  io:format("[DEBUG][~p] fixed_query: OrderBy=~p~n", [self(), OrderBy]),
+  
   SingleBatch = BatchSize < 0,
+  io:format("[DEBUG][~p] fixed_query: SingleBatch=~p~n", [self(), SingleBatch]),
+  
   AbsBatchSize = erlang:abs(BatchSize),
+  io:format("[DEBUG][~p] fixed_query: AbsBatchSize=~p~n", [self(), AbsBatchSize]),
+  
   BatchSizeField = batch_size(AbsBatchSize =:= 0, AbsBatchSize),
+  io:format("[DEBUG][~p] fixed_query: BatchSizeField=~p~n", [self(), BatchSizeField]),
+  
   SingleBatchField = single_batch(SingleBatch),
+  io:format("[DEBUG][~p] fixed_query: SingleBatchField=~p~n", [self(), SingleBatchField]),
+  
   SortField = sort_field(OrderBy),
-  CommandDoc = [
-    {<<"find">>, Coll},
-    {<<"$readPreference">>, ReadPref},
-    {<<"filter">>, NewSelector},
-    {<<"projection">>, Projector},
-    {<<"skip">>, Skip}
+  io:format("[DEBUG][~p] fixed_query: SortField=~p~n", [self(), SortField]),
+  
+  CommandDocList = lists:flatten([
+    <<"find">>, Coll,
+    <<"$readPreference">>, ReadPref,
+    <<"filter">>, NewSelector,
+    <<"projection">>, Projector,
+    <<"skip">>, Skip
   ] ++ SortField
     ++ BatchSizeField
-    ++ SingleBatchField,
-  #op_msg_command{command_doc = CommandDoc}.
+    ++ SingleBatchField),
+  io:format("[DEBUG][~p] fixed_query: CommandDocList=~p~n", [self(), CommandDocList]),
+  
+  CommandDoc = list_to_tuple(CommandDocList),
+  io:format("[DEBUG][~p] fixed_query: CommandDoc=~p~n", [self(), CommandDoc]),
+  
+  Result = #op_msg_command{command_doc = CommandDoc, database = DB},
+  io:format("[DEBUG][~p] fixed_query: Result=#op_msg_command{database=~p}~n", [self(), DB]),
+  Result.
 
 batch_size(true, _BatchSize) -> [];
 batch_size(false, BatchSize) -> [{<<"batchSize">>, BatchSize}].

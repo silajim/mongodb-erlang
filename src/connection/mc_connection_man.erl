@@ -29,13 +29,21 @@ read(Connection, Request) -> read(Connection, Request, undefined).
 -spec read(pid() | atom(), query() | op_msg_command(), undefined | mc_worker_api:batchsize()) -> [] | {ok, pid()}.
 read(Connection, Request = #'query'{collection = Collection, batchsize = BatchSize, database = DB}, CmdBatchSize) ->
   read(Connection, Request, Collection, select_batchsize(CmdBatchSize, BatchSize), DB);
-read(Connection, Request = #'op_msg_command'{database = DB, command_doc = ([{_, Collection} | _ ] = Fields)},
-    _CmdBatchSize)  ->
-  BatchSize = case lists:keyfind(<<"batchSize">>, 1, Fields) of
-    {_, Size} -> Size;
-    false -> 101
+
+read(Connection, Request = #'op_msg_command'{database = DB, command_doc = CommandDoc}, _CmdBatchSize) ->
+  Fields = case is_list(CommandDoc) of
+    true -> CommandDoc;
+    false -> tuple_to_list(CommandDoc)
   end,
+  [_, Collection | _] = Fields,
+  
+  % Convert to proplist format for easier lookup: [key1, val1, key2, val2] -> [{key1, val1}, {key2, val2}]
+  PropList = to_proplist(Fields, []),
+  BatchSize = proplists:get_value(<<"batchSize">>, PropList, 101),
   read(Connection, Request, Collection, BatchSize, DB).
+
+to_proplist([K, V | Rest], Acc) -> to_proplist(Rest, [{K, V} | Acc]);
+to_proplist([], Acc) -> lists:reverse(Acc).
 
 read(Connection, Request, Collection, BatchSize, DB) ->
   case request_worker(Connection, Request) of
